@@ -1,14 +1,19 @@
 #![feature(clamp)]
 mod geometry {
 
-    use nalgebra::base::dimension::U8;
-    use nalgebra::base::VectorN;
+    use nalgebra::base::dimension::{U3, U4, U6, U8};
+    use nalgebra::base::{VectorN, MatrixN};
     use nalgebra::geometry::Quaternion;
-    use std::ops::{Add, Mul, Sub};
+    use std::ops::{Add, Mul, Sub, Div};
 
     static THRESHOLD: f64 = 1e-12;
 
+    pub type Vector3 = VectorN<f64, U3>;
+    pub type Vector4 = VectorN<f64, U4>;
+    pub type Vector6 = VectorN<f64, U6>;
     pub type Vector8 = VectorN<f64, U8>;
+    pub type Matrix4 = MatrixN<f64, U4>;
+    pub type Matrix8 = MatrixN<f64, U8>;
 
     pub struct DualQuaternion {
         pub p: Quaternion<f64>,
@@ -132,7 +137,7 @@ mod geometry {
                 panic!("The translation operation is defined only for unit dual quaterions.")
             }
 
-            2 * (self.d() * self.p().conjugate())
+            2. * (self.d() * self.p().conjugate())
         }
 
         pub fn rotation(&self) -> DualQuaternion {
@@ -202,37 +207,114 @@ mod geometry {
             prim + DualQuaternion::new(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0) * self.d() * prim
         }
 
-        pub fn pow() {}
+        pub fn pow(&self, a: f64) -> DualQuaternion {
+            (a * self.log()).exp()
+        }
 
-        pub fn tplus() {}
+        pub fn tplus(self) -> DualQuaternion {
+            if !self.is_unit() {
+                panic!("The tplus operation is defined only for unit dual quaterions.")
+            }
 
-        pub fn pinv() {}
+            self * self.p().conj()
+        }
 
-        pub fn ham_add4() {}
+        pub fn pinv(&self) -> DualQuaternion {
+            if !self.is_unit() {
+                panic!("The pinv operation is defined only for unit dual quaterions.")
+            }
 
-        pub fn ham_subtract4() {}
+            (self.conj().tplus() * self.tplus()).conj() * self.conj()
+        }
 
-        pub fn ham_add8() {}
+        pub fn ham_add4(&self) -> Matrix4 {
+            Matrix4::new(
+                self.p[3], -self.p[0], -self.p[1], -self.p[2],
+                self.p[0],  self.p[3], -self.p[2],  self.p[1],
+                self.p[1],  self.p[2],  self.p[3], -self.p[0],
+                self.p[2], -self.p[1],  self.p[0],  self.p[3],
+            )
+        }
 
-        pub fn ham_subtract8() {}
+        pub fn ham_subtract4(&self) -> Matrix4 {
+            Matrix4::new(
+                self.p[3], -self.p[0], -self.p[1], -self.p[2],
+                self.p[0],  self.p[3],  self.p[2], -self.p[1],
+                self.p[1], -self.p[2],  self.p[3],  self.p[0],
+                self.p[2],  self.p[1], -self.p[0],  self.p[3],
+            )
+        }
 
-        pub fn vec3() {}
+        pub fn ham_add8(&self) -> Matrix8 {
+            Matrix8::from_row_slice(&[
+                self.p[3], -self.p[0], -self.p[1], -self.p[2], 0.0, 0.0, 0.0, 0.0,
+                self.p[0], self.p[3], -self.p[2], self.p[1], 0.0, 0.0, 0.0, 0.0,
+                self.p[1], self.p[2], self.p[3], -self.p[0], 0.0, 0.0, 0.0, 0.0,
+                self.p[2], -self.p[1], self.p[0], self.p[3], 0.0, 0.0, 0.0, 0.0,
+                self.d[3], -self.d[0], -self.d[1], -self.d[2], self.p[3], -self.p[0], -self.p[1], -self.p[2],
+                self.d[0], self.d[3], -self.d[2], self.d[1], self.p[0], self.p[3], -self.p[2], self.p[1],
+                self.d[1], self.d[2], self.d[3], -self.d[0], self.p[1], self.p[2], self.p[3], -self.p[0],
+                self.d[2], -self.d[1], self.d[0], self.d[3], self.p[2], -self.p[1], self.p[0], self.p[3],
+            ])
+        }
 
-        pub fn vec4() {}
+        pub fn ham_subtract8(&self) -> Matrix8 {
+            Matrix8::from_row_slice(&[
+                self.p[3], -self.p[0], -self.p[1], -self.p[2], 0.0, 0.0, 0.0, 0.0,
+                self.p[0], self.p[3], self.p[2], -self.p[1], 0.0, 0.0, 0.0, 0.0,
+                self.p[1], -self.p[2], self.p[3], self.p[0], 0.0, 0.0, 0.0, 0.0,
+                self.p[2], self.p[1], -self.p[0], self.p[3], 0.0, 0.0, 0.0, 0.0,
+                self.d[3], -self.d[0], -self.d[1], -self.d[2], self.p[3], -self.p[0], -self.p[1], -self.p[2],
+                self.d[0], self.d[3], self.d[2], -self.d[1], self.p[0], self.p[3], self.p[2], -self.p[1],
+                self.d[1], -self.d[2], self.d[3], self.d[0], self.p[1], -self.p[2], self.p[3], self.p[0],
+                self.d[2], self.d[1], -self.d[0], self.d[3], self.p[2], self.p[1], -self.p[0], self.p[3],
+            ])
+        }
 
-        pub fn vec6() {}
+        pub fn vec3(&self) -> Vector3 {
+            Vector3::new(self.p[0], self.p[1], self.p[2])
+        }
 
-        pub fn vec8() {}
+        pub fn vec4(&self) -> Vector4 {
+            Vector4::new(self.p[3], self.p[0], self.p[1], self.p[2])
+        }
 
-        pub fn generalized_jacobian() {}
+        pub fn vec6(&self) -> Vector6 {
+            Vector6::new(self.p[0], self.p[1], self.p[2], self.d[0], self.d[1], self.d[2])
+        }
 
-        pub fn normalize() {}
+        pub fn vec8(&self) -> Vector8 {
+            Vector8::from_row_slice(&[self.p[3], self.p[0], self.p[1], self.p[2], self.d[3], self.d[0], self.d[1], self.d[2]])
+        }
 
-        pub fn sharp() {}
+        pub fn generalized_jacobian(&self) -> Matrix8 {
+            Matrix8::from_row_slice(&[
+                self.d[3],  self.d[0],  self.d[1],  self.d[2],  self.p[3],  self.p[0],  self.p[1],  self.p[2],
+                self.d[0], -self.d[3],  self.d[2], -self.d[1], -self.p[0],  self.p[3], -self.p[2],  self.p[1],
+                self.d[1], -self.d[2], -self.d[3],  self.d[0], -self.p[1],  self.p[2],  self.p[3], -self.p[0],
+                self.d[2],  self.d[1], -self.d[0], -self.d[3], -self.p[2], -self.p[1],  self.p[0],  self.p[3],
+                self.p[3],  self.p[0],  self.p[1],  self.p[2], 0.0, 0.0, 0.0, 0.0,
+                -self.p[0],  self.p[3], -self.p[2],  self.p[1], 0.0, 0.0, 0.0, 0.0,
+                -self.p[1],  self.p[2],  self.p[3], -self.p[0], 0.0, 0.0, 0.0, 0.0,
+                -self.p[2], -self.p[1],  self.p[0],  self.p[3], 0.0, 0.0, 0.0, 0.0,
+            ])
+        }
+
+        pub fn normalize(self) -> DualQuaternion {
+            self * self.norm().inv()
+        }
+
+        pub fn sharp(&self) -> DualQuaternion {
+            self.p() - DualQuaternion::new(0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0) * self.d()
+        }
 
         pub fn adj() {}
 
         pub fn adj_sharp() {}
+
+        pub fn to_unit(&self) {
+            
+        }
 
         pub fn is_unit(&self) -> bool {
             unimplemented!
@@ -301,6 +383,26 @@ mod geometry {
         }
     }
 
+    // Addition: RHS scalar
+    impl Add<f64> for DualQuaternion {
+        type Output = DualQuaternion;
+
+        #[inline]
+        fn add(self, rhs: f64) -> DualQuaternion {
+            self + DualQuaternion::new(rhs, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        }
+    }
+
+    // Addition: LHS scalar
+    impl Add<DualQuaternion> for f64 {
+        type Output = DualQuaternion;
+
+        #[inline]
+        fn add(self, rhs: DualQuaternion) -> DualQuaternion {
+            DualQuaternion::new(self, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0) + rhs
+        }
+    }
+
     // Subtraction: DualQuaternion
     impl Sub<DualQuaternion> for DualQuaternion {
         type Output = DualQuaternion;
@@ -311,6 +413,26 @@ mod geometry {
             let d = q1.d - q2.d;
 
             DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+        }
+    }
+
+    // Substraction: RHS scalar
+    impl Sub<f64> for DualQuaternion {
+        type Output = DualQuaternion;
+
+        #[inline]
+        fn sub(self, rhs: f64) -> DualQuaternion {
+            self - DualQuaternion::new(rhs, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        }
+    }
+
+    // Substraction: LHS scalar
+    impl Sub<DualQuaternion> for f64 {
+        type Output = DualQuaternion;
+
+        #[inline]
+        fn sub(self, rhs: DualQuaternion) -> DualQuaternion {
+            DualQuaternion::new(self, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0) - rhs
         }
     }
 
@@ -372,26 +494,6 @@ mod geometry {
         #[inline]
         fn mul(self, rhs: DualQuaternion) -> DualQuaternion {
             DualQuaternion::new(self, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0) * rhs
-        }
-    }
-
-    // Multiplaction: LHS scalar
-    impl Mul<DualQuaternion> for f32 {
-        type Output = DualQuaternion;
-
-        #[inline]
-        fn mul(self, rhs: DualQuaternion) -> DualQuaternion {
-            DualQuaternion::new(self as f64, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0) * rhs
-        }
-    }
-
-    // Multiplaction: LHS scalar
-    impl Mul<DualQuaternion> for i32 {
-        type Output = DualQuaternion;
-
-        #[inline]
-        fn mul(self, rhs: DualQuaternion) -> DualQuaternion {
-            DualQuaternion::new(self as f64, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0) * rhs
         }
     }
 }
