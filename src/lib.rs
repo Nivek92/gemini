@@ -1,5 +1,6 @@
 #![feature(clamp)]
-mod geometry {
+
+mod core {
 
     use nalgebra::base::dimension::{U3, U4, U6, U8};
     use nalgebra::base::{MatrixN, VectorN};
@@ -16,7 +17,7 @@ mod geometry {
     pub type Matrix4 = MatrixN<f64, U4>;
     pub type Matrix8 = MatrixN<f64, U8>;
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct DualQuaternion {
         pub p: Quaternion<f64>,
         pub d: Quaternion<f64>,
@@ -37,6 +38,10 @@ mod geometry {
             }
         }
 
+        pub fn from_parts(p: Quaternion<f64>, d: Quaternion<f64>) -> DualQuaternion {
+            DualQuaternion { p, d }
+        }
+
         pub fn new_pure_dual(q0: f64, q1: f64, q2: f64, q3: f64, q4: f64, q5: f64) -> Self {
             DualQuaternion {
                 p: Quaternion::new(0., q0, q1, q2),
@@ -47,6 +52,13 @@ mod geometry {
         pub fn new_quaternion(q0: f64, q1: f64, q2: f64, q3: f64) -> Self {
             DualQuaternion {
                 p: Quaternion::new(q0, q1, q2, q3),
+                d: Quaternion::new(0., 0., 0., 0.),
+            }
+        }
+
+        pub fn new_quaternion_from_part(p: Quaternion<f64>) -> Self {
+            DualQuaternion {
+                p,
                 d: Quaternion::new(0., 0., 0., 0.),
             }
         }
@@ -76,24 +88,12 @@ mod geometry {
             DualQuaternion::new_quaternion(self.p[3], self.p[0], self.p[1], self.p[2])
         }
 
-        pub fn primary(&self) -> DualQuaternion {
-            self.p()
-        }
-
         pub fn d(&self) -> DualQuaternion {
             DualQuaternion::new_quaternion(self.d[3], self.d[0], self.d[1], self.d[2])
         }
 
-        pub fn dual(&self) -> DualQuaternion {
-            self.d()
-        }
-
         pub fn re(&self) -> DualQuaternion {
             DualQuaternion::new_real_dual(self.p[3], self.d[3])
-        }
-
-        pub fn real(&self) -> DualQuaternion {
-            self.re()
         }
 
         pub fn im(&self) -> DualQuaternion {
@@ -102,30 +102,19 @@ mod geometry {
             )
         }
 
-        pub fn imaginary(&self) -> DualQuaternion {
-            self.im()
-        }
-
         pub fn conj(&self) -> DualQuaternion {
-            DualQuaternion::new(
-                self.p[3], -self.p[0], -self.p[1], -self.p[2], self.d[3], -self.d[0], -self.d[1],
-                -self.d[2],
-            )
+            DualQuaternion::from_parts(self.p.conjugate(), self.d.conjugate())
         }
 
-        pub fn conjugate(&self) -> DualQuaternion {
-            self.conj()
-        }
-
-        pub fn norm(self) -> DualQuaternion {
+        pub fn norm(&self) -> DualQuaternion {
             if self.is_pure() {
                 return DualQuaternion::from_vec(Vector8::zeros());
             }
 
-            let mut values = Vector8::zeros();
-            let norm = self.conj() * self;
-            let _p = norm.p;
-            let _d = norm.d;
+            let q = self.conj() * self;
+            let mut values = q.vec8();
+            let _p = q.p;
+            let _d = q.d;
 
             values[0] = f64::sqrt(_p[3]);
             values[4] = _d[3] / 2. * _p[3];
@@ -142,33 +131,49 @@ mod geometry {
                 }
             }
 
-            DualQuaternion::from_vec(Vector8::zeros())
+            DualQuaternion::from_vec(values)
+        }
+
+        pub fn norm_squared(&self) -> DualQuaternion {
+            self * self.conj()
         }
 
         pub fn inv(&self) -> DualQuaternion {
-            let norm = self * self.conj();
+            let q = self * self.conj();
 
-            self.conj()
-                * DualQuaternion::new_real_dual(
-                    1. / norm.p[3],
-                    -norm.d[3] / (norm.p[3] * norm.p[3]),
-                )
+            self.conj() * DualQuaternion::new_real_dual(1. / q.p[3], -q.d[3] / (q.p[3] * q.p[3]))
         }
 
-        pub fn translation(&self) -> DualQuaternion {
+        pub fn get_translation(&self) -> DualQuaternion {
             if !self.is_unit() {
                 panic!("The translation operation is defined only for unit dual quaterions.")
             }
 
-            2. * (self.d() * self.p().conjugate())
+            2. * (self.d() * self.p().conj())
         }
 
-        pub fn rotation(&self) -> DualQuaternion {
+        pub fn get_translation_vector(&self) -> Vector3 {
+            if !self.is_unit() {
+                panic!("The translation operation is defined only for unit dual quaterions.")
+            }
+
+            (2. * (self.d() * self.p().conj())).d.imag()
+        }
+
+        pub fn get_rotation(&self) -> DualQuaternion {
             if !self.is_unit() {
                 panic!("The rotation operation is defined only for unit dual quaterions.")
             }
 
             self.p()
+        }
+
+        pub fn get_rotation_quaternion(&self) -> Quaternion<f64> {
+            if !self.is_unit() {
+                panic!("The rotation operation is defined only for unit dual quaterions.")
+            }
+
+            self.p
         }
 
         pub fn rotation_axis(&self) -> DualQuaternion {
@@ -198,7 +203,7 @@ mod geometry {
             }
 
             let q1: DualQuaternion = (0.5 * self.rotation_angle()) * self.rotation_axis();
-            let q2: DualQuaternion = 0.5 * self.translation();
+            let q2: DualQuaternion = 0.5 * self.get_translation();
 
             let p: Quaternion<f64> = q1.p;
             let d: Quaternion<f64> = q2.p;
@@ -358,7 +363,7 @@ mod geometry {
         }
 
         pub fn dot(q1: &DualQuaternion, q2: &DualQuaternion) -> DualQuaternion {
-            -1. * (q1 * q1 + q2 * q1) * 0.5
+            -((q1 * q2 + q2 * q1) * 0.5)
         }
 
         pub fn cross(q1: &DualQuaternion, q2: &DualQuaternion) -> DualQuaternion {
@@ -485,7 +490,7 @@ mod geometry {
             let p = q1.p + q2.p;
             let d = q1.d + q2.d;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -498,7 +503,7 @@ mod geometry {
             let p = q1.p + q2.p;
             let d = q1.d + q2.d;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -510,7 +515,7 @@ mod geometry {
             let p = q1.p + q2.p;
             let d = q1.d + q2.d;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -522,7 +527,7 @@ mod geometry {
             let p = q1.p + q2.p;
             let d = q1.d + q2.d;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -555,7 +560,7 @@ mod geometry {
             let p = q1.p - q2.p;
             let d = q1.d - q2.d;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -568,7 +573,7 @@ mod geometry {
             let p = q1.p - q2.p;
             let d = q1.d - q2.d;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -580,7 +585,7 @@ mod geometry {
             let p = q1.p - q2.p;
             let d = q1.d - q2.d;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -592,7 +597,7 @@ mod geometry {
             let p = q1.p - q2.p;
             let d = q1.d - q2.d;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -623,10 +628,10 @@ mod geometry {
         #[inline]
         fn mul(self, q2: DualQuaternion) -> DualQuaternion {
             let q1 = &self;
-            let p = q1.p * q1.p;
+            let p = q1.p * q2.p;
             let d = q1.p * q2.d + q1.d * q2.p;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -637,10 +642,10 @@ mod geometry {
         #[inline]
         fn mul(self, q2: &DualQuaternion) -> DualQuaternion {
             let q1 = &self;
-            let p = q1.p * q1.p;
+            let p = q1.p * q2.p;
             let d = q1.p * q2.d + q1.d * q2.p;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -650,10 +655,10 @@ mod geometry {
         #[inline]
         fn mul(self, q2: DualQuaternion) -> DualQuaternion {
             let q1 = &self;
-            let p = q1.p * q1.p;
+            let p = q1.p * q2.p;
             let d = q1.p * q2.d + q1.d * q2.p;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -663,10 +668,10 @@ mod geometry {
         #[inline]
         fn mul(self, q2: &DualQuaternion) -> DualQuaternion {
             let q1 = &self;
-            let p = q1.p * q1.p;
+            let p = q1.p * q2.p;
             let d = q1.p * q2.d + q1.d * q2.p;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
     }
 
@@ -676,7 +681,7 @@ mod geometry {
 
         #[inline]
         fn mul(self, rhs: f64) -> DualQuaternion {
-            self * DualQuaternion::new_real_quaternion(rhs)
+            DualQuaternion::from_parts(self.p * rhs, self.d * rhs)
         }
     }
 
@@ -686,7 +691,28 @@ mod geometry {
 
         #[inline]
         fn mul(self, rhs: DualQuaternion) -> DualQuaternion {
-            DualQuaternion::new_real_quaternion(self) * rhs
+            DualQuaternion::from_parts(self * rhs.p, self * rhs.d)
+        }
+    }
+
+    // Division: DualQuaternion
+    impl Div<DualQuaternion> for DualQuaternion {
+        type Output = DualQuaternion;
+
+        #[inline]
+        fn div(self, rhs: DualQuaternion) -> DualQuaternion {
+            let q1 = &self;
+            let q2 = &rhs;
+
+            let a = q1.p;
+            let b = q1.d;
+            let c = q2.p;
+            let d = q2.d;
+
+            DualQuaternion::from_parts(
+                a.right_div(&c).unwrap(),
+                (b * c - a * d).right_div(&c.powf(2.)).unwrap(),
+            )
         }
     }
 
@@ -699,7 +725,61 @@ mod geometry {
             let p = -self.p;
             let d = -self.d;
 
-            DualQuaternion::new(p[3], p[0], p[1], p[2], d[3], d[0], d[1], d[2])
+            DualQuaternion::from_parts(p, d)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::core::DualQuaternion;
+
+    #[test]
+    fn addition_dq_dq() {
+        let q1 = DualQuaternion::new(1., 2., 3., 4., 5., 6., 7., 8.);
+        let q2 = DualQuaternion::new(1., 2., 3., 4., 5., 6., 7., 8.);
+        let expected = DualQuaternion::new(2., 4., 6., 8., 10., 12., 14., 16.);
+
+        assert_eq!(q1 + q2, expected);
+        assert_eq!(q2 + q1, expected);
+    }
+
+    #[test]
+    fn addition_dq_scalar() {
+        let q = DualQuaternion::new(1., 2., 3., 4., 5., 6., 7., 8.);
+        let s = 1.;
+        let expected = DualQuaternion::new(2., 2., 3., 4., 5., 6., 7., 8.);
+
+        assert_eq!(q + s, expected);
+        assert_eq!(s + q, expected);
+    }
+
+    #[test]
+    fn multiplication_dq_dq() {
+        let q1 = DualQuaternion::new(1., 2., 3., 4., 5., 6., 7., 8.);
+        let q2 = DualQuaternion::new(1., 2., 3., 4., 5., 6., 7., 8.);
+        let q1_p = q1.p;
+        let q1_d = q1.d;
+        let q2_p = q2.p;
+        let q2_d = q2.d;
+        assert_eq!((q1 * q2).p, q1_p * q2_p);
+        assert_eq!((q1 * q2).d, q1_p * q2_d + q1_d * q2_p);
+    }
+
+    #[test]
+    fn multiplication_dq_scalar() {
+        let q = DualQuaternion::new(1., 2., 3., 4., 5., 6., 7., 8.);
+        let s = 2.;
+        assert_eq!((s * q).p, s * q.p);
+        assert_eq!((s * q).d, s * q.d);
+    }
+
+    #[test]
+    fn norm() {
+        let q = DualQuaternion::new(1., 2., 3., 4., 5., 6., 7., 8.);
+        assert_eq!(
+            q.norm().im(),
+            DualQuaternion::new(0., 0., 0., 0., 0., 0., 0., 0.)
+        );
     }
 }
